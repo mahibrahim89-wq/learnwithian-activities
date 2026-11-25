@@ -26,7 +26,9 @@ HEX = dict(navy="#1d2b45", blue="#2f8fe6", green="#3fae5a", pink="#ec4f7b", sand
 C = {k: HexColor(v) for k, v in HEX.items()}
 WHITE = HexColor("#ffffff")
 SHUFFLE = [2, 0, 3, 1]  # order the 4 story cards are shown in (never the true order)
-KINDS = {"story": "Story order cards", "puzzle": "Picture puzzle", "memory": "Memory match game"}
+KINDS = {"story": "Story sequencing cards", "puzzle": "Picture puzzle", "memory": "Memory match game"}
+TITLES = {"story": "{t} Sequencing Cards for Preschool – Free Printable", "puzzle": "{t} Picture Puzzle for Toddlers – Free Printable",
+          "memory": "{t} Memory Match Game for Toddlers – Free Printable"}
 CHARS = [("ian", "Ian"), ("mama_sana", "Mama"), ("papa", "Papa"), ("latte", "Latte"), ("lisa", "Lisa"), ("lorie", "Lorie")]
 
 
@@ -177,9 +179,9 @@ class Maker:
             name = KINDS[kind]
             meta = {
                 "episode": ep["episode"], "episode_title": ep["title"], "youtube_id": ep["youtube_id"], "activity": kind,
-                "title": f"{ep['theme']} {name} for Toddlers and Preschool",
-                "description": f"Printable {name.lower()} made from the Learn with Ian episode {ep['title']}. "
-                               f"Ages 2 to 6. Free PDF in US Letter and A4. Watch the episode together, then play. learnwithian.com",
+                "title": TITLES[kind].format(t=ep["theme"]),
+                "description": f"Free printable {name.lower()} for preschool and toddlers, made from the Learn with Ian episode {ep['title']}. "
+                               f"Ages 2 to 6. PDF in US Letter and A4. Watch the episode together, then play. learnwithian.com",
                 "checks_passed": False,
             }
             json.dump(meta, open(f"{folder}/meta.json", "w"), indent=2)
