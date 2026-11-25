@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CHARACTERS_DIR = ROOT / "characters"
 FONTS_DIR = ROOT / "fonts"
+ICONS_DIR = ROOT / "icons"
 OUTPUT_DIR = ROOT / "output"
 EPISODES_JSON = ROOT / "episodes.json"
 
@@ -45,24 +46,13 @@ CHARACTER_FILES = {
     "lorie": "lorie.png",
 }
 
-# Which character appears on which word cards (sparse, friendly)
-WORD_CHARACTERS = {
-    "elephant": "ian",
-    "giraffe": "liam",
-    "flower": "ian",
-    "bee": "latte",
-    "circle": "ian",
-    "star": "liam",
-    "one": "ian",
-    "five": "liam",
-    "red": "ian",
-    "blue": "lisa",
-    "snow": "ian",
-    "snowman": "papa",
-    "hat": "mama_sana",
-    "tree": "ian",
-    "present": "liam",
-    "cookie": "lorie",
-    "cats": "latte",
-    "ball": "lisa",
+# At most one full character per page (corner). Chosen by episode theme.
+EPISODE_CHARACTER = {
+    1: "ian",
+    2: "ian",
+    3: "liam",
+    4: "ian",
+    5: "lisa",
+    6: "papa",
+    7: "mama_sana",
 }

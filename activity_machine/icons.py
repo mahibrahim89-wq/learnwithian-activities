@@ -1,15 +1,19 @@
-"""Simple code-drawn icons for activity words. No generative AI."""
+"""Word pictures from Google Noto Emoji (Apache 2.0) plus a few Noto-style composites."""
 
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from io import BytesIO
+from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
-from .config import BERRY, GRAPE, INK, LEAF, PAPER, SKY, SUN
+from .config import ROOT
 
-# Named brand / clear colors
+ICONS_DIR = ROOT / "icons"
+
+# Brand-adjacent clear colors for swatches / composites (Noto-like saturation)
 RED = "#e53935"
 BLUE = "#1e88e5"
 YELLOW = "#fdd835"
@@ -20,11 +24,11 @@ BROWN = "#8d6e63"
 PINK = "#ec407a"
 WHITE = "#ffffff"
 BLACK = "#212121"
-GRAY = "#90a4ae"
-LIGHT_BLUE = "#81d4fa"
+INK = "#1d2b45"
 CREAM = "#fff8e1"
 DARK_GREEN = "#2e7d32"
-TAN = "#d7ccc8"
+METAL = "#90a4ae"
+WOOD = "#a1887f"
 
 
 def _hex(c: str) -> tuple[int, int, int]:
@@ -32,1146 +36,501 @@ def _hex(c: str) -> tuple[int, int, int]:
     return tuple(int(c[i : i + 2], 16) for i in (0, 2, 4))
 
 
-def blank(size: int = 256, bg=None) -> tuple[Image.Image, ImageDraw.ImageDraw]:
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0) if bg is None else _hex(bg) + (255,))
-    return img, ImageDraw.Draw(img)
+def blank(size: int = 512) -> Image.Image:
+    return Image.new("RGBA", (size, size), (0, 0, 0, 0))
 
 
 def to_bytes(img: Image.Image) -> bytes:
     buf = BytesIO()
-    img.save(buf, format="PNG")
+    img.convert("RGBA").save(buf, format="PNG")
     return buf.getvalue()
 
 
-def _ellipse(d, box, fill, outline=None, width=2):
-    d.ellipse(box, fill=_hex(fill) + (255,), outline=_hex(outline or fill) + (255,), width=width)
+@lru_cache(maxsize=256)
+def load_emoji(codepoint: str, size: int = 512) -> Image.Image:
+    """Load a committed Noto emoji PNG by codepoint (e.g. '1f418')."""
+    path = ICONS_DIR / f"emoji_u{codepoint.lower()}.png"
+    if not path.exists():
+        # try without leading zeros issues
+        raise FileNotFoundError(f"Missing Noto emoji PNG: {path}")
+    im = Image.open(path).convert("RGBA")
+    if im.size != (size, size):
+        im = im.resize((size, size), Image.Resampling.LANCZOS)
+    return im
 
 
-def _rect(d, box, fill, outline=None, width=2):
-    d.rectangle(box, fill=_hex(fill) + (255,), outline=_hex(outline or INK) + (255,), width=width)
+def paste_center(base: Image.Image, overlay: Image.Image, scale: float = 0.85, dy: int = 0) -> Image.Image:
+    s = int(base.size[0] * scale)
+    ov = overlay.resize((s, s), Image.Resampling.LANCZOS)
+    x = (base.size[0] - s) // 2
+    y = (base.size[1] - s) // 2 + dy
+    base.alpha_composite(ov, (x, y))
+    return base
 
 
-def _polygon(d, pts, fill, outline=None, width=2):
-    d.polygon(pts, fill=_hex(fill) + (255,), outline=_hex(outline or INK) + (255,), width=width)
+def paste_at(base: Image.Image, overlay: Image.Image, cx: float, cy: float, scale: float) -> Image.Image:
+    s = int(base.size[0] * scale)
+    ov = overlay.resize((s, s), Image.Resampling.LANCZOS)
+    x = int(cx * base.size[0] - s / 2)
+    y = int(cy * base.size[1] - s / 2)
+    base.alpha_composite(ov, (x, y))
+    return base
 
 
-def _line(d, pts, fill, width=4):
-    d.line(pts, fill=_hex(fill) + (255,), width=width)
+def emoji_icon(codepoint: str, size: int = 512) -> Image.Image:
+    img = blank(size)
+    return paste_center(img, load_emoji(codepoint, 512), 0.92)
 
 
-def _star_points(cx, cy, r_outer, r_inner, n=5, rot=-math.pi / 2):
-    pts = []
-    for i in range(n * 2):
-        r = r_outer if i % 2 == 0 else r_inner
-        a = rot + i * math.pi / n
-        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
-    return pts
-
-
-def _heart_points(cx, cy, s):
-    pts = []
-    for t in [i / 40 * 2 * math.pi for i in range(41)]:
-        x = 16 * math.sin(t) ** 3
-        y = -(
-            13 * math.cos(t)
-            - 5 * math.cos(2 * t)
-            - 2 * math.cos(3 * t)
-            - math.cos(4 * t)
-        )
-        pts.append((cx + x * s / 16, cy + y * s / 16))
-    return pts
-
-
-def _count_items(draw_one, n: int, size: int = 256) -> Image.Image:
-    img, d = blank(size)
-    # layout grid
+def count_emoji(codepoint: str, n: int, size: int = 512) -> Image.Image:
+    """Exact count of one clear emoji object."""
+    img = blank(size)
+    emoji = load_emoji(codepoint, 512)
     cols = min(n, 3) if n <= 6 else 3
     rows = math.ceil(n / cols)
-    cell_w = size / (cols + 0.4)
-    cell_h = size / (rows + 0.4)
-    item = int(min(cell_w, cell_h) * 0.75)
+    cell = size / max(cols, rows)
+    item = int(cell * 0.78)
+    ov = emoji.resize((item, item), Image.Resampling.LANCZOS)
     idx = 0
     for r in range(rows):
         for c in range(cols):
             if idx >= n:
                 break
-            cx = (c + 0.7) * (size / (cols + 0.2))
-            cy = (r + 0.7) * (size / (rows + 0.2))
-            draw_one(d, cx, cy, item)
+            # center grid
+            cx = int((c + 0.5) * size / cols - item / 2)
+            cy = int((r + 0.5) * size / rows - item / 2)
+            img.alpha_composite(ov, (cx, cy))
             idx += 1
     return img
 
 
-# --- Animal / zoo ---
-
-def icon_elephant(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.25, s * 0.35, s * 0.75, s * 0.75], GRAY, INK)
-    _ellipse(d, [s * 0.55, s * 0.25, s * 0.85, s * 0.55], GRAY, INK)  # head
-    _ellipse(d, [s * 0.15, s * 0.4, s * 0.35, s * 0.7], GRAY, INK)  # ear
-    _rect(d, [s * 0.72, s * 0.45, s * 0.82, s * 0.85], GRAY, INK)  # trunk
-    _ellipse(d, [s * 0.7, s * 0.35, s * 0.76, s * 0.41], BLACK)  # eye
+def color_with_object(swatch: str, object_cp: str, size: int = 512) -> Image.Image:
+    """Color word: clear object in that color + color swatch."""
+    img = blank(size)
+    d = ImageDraw.Draw(img)
+    # swatch circle bottom-left
+    pad = int(size * 0.06)
+    r = int(size * 0.22)
+    d.ellipse([pad, size - pad - 2 * r, pad + 2 * r, size - pad], fill=_hex(swatch) + (255,), outline=_hex(INK) + (255,), width=4)
+    # object large on the right/center
+    paste_at(img, load_emoji(object_cp), 0.58, 0.42, 0.72)
     return img
 
 
-def icon_giraffe(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.42, s * 0.15, s * 0.58, s * 0.7], SUN, INK)
-    for y in range(4):
-        _ellipse(d, [s * 0.44, s * (0.2 + y * 0.12), s * 0.56, s * (0.28 + y * 0.12)], BROWN)
-    _ellipse(d, [s * 0.38, s * 0.05, s * 0.68, s * 0.28], SUN, INK)
-    _ellipse(d, [s * 0.55, s * 0.12, s * 0.6, s * 0.17], BLACK)
-    _rect(d, [s * 0.3, s * 0.65, s * 0.7, s * 0.9], SUN, INK)
+def _rounded_rect(d, box, fill, outline=None, width=3, radius=24):
+    d.rounded_rectangle(box, radius=radius, fill=_hex(fill) + (255,), outline=_hex(outline or fill) + (255,), width=width)
+
+
+# --- Composites for words without a good single emoji ---
+
+def icon_soil(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
+    # rich brown mound
+    d.ellipse([int(size * 0.08), int(size * 0.48), int(size * 0.92), int(size * 0.95)], fill=_hex(BROWN) + (255,))
+    d.ellipse([int(size * 0.15), int(size * 0.42), int(size * 0.85), int(size * 0.78)], fill=_hex("#6d4c41") + (255,))
+    # soil crumbs
+    for x, y in [(0.25, 0.62), (0.4, 0.7), (0.55, 0.6), (0.7, 0.68), (0.35, 0.78)]:
+        rr = int(size * 0.03)
+        d.ellipse([int(x * size) - rr, int(y * size) - rr, int(x * size) + rr, int(y * size) + rr], fill=_hex("#5d4037") + (255,))
+    paste_at(img, load_emoji("1f331"), 0.5, 0.32, 0.55)
     return img
 
 
-def icon_zebra(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.2, s * 0.35, s * 0.8, s * 0.75], WHITE, INK)
-    for i in range(5):
-        x = s * (0.28 + i * 0.1)
-        _rect(d, [x, s * 0.38, x + s * 0.05, s * 0.72], BLACK)
-    _ellipse(d, [s * 0.65, s * 0.22, s * 0.9, s * 0.5], WHITE, INK)
+def icon_roots(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
+    # soil line
+    d.rectangle([0, int(size * 0.42), size, size], fill=_hex("#efebe9") + (255,))
+    d.ellipse([int(size * 0.05), int(size * 0.35), int(size * 0.95), int(size * 0.55)], fill=_hex(BROWN) + (220,))
+    # sprout above ground
+    paste_at(img, load_emoji("1f331"), 0.5, 0.22, 0.4)
+    # branching roots (smooth tapered strokes)
+    cx, cy = size // 2, int(size * 0.5)
+    root_paths = [
+        [(cx, cy), (cx - 40, cy + 60), (cx - 90, cy + 140), (cx - 120, cy + 200)],
+        [(cx, cy), (cx + 10, cy + 80), (cx, cy + 160), (cx + 20, cy + 220)],
+        [(cx, cy), (cx + 50, cy + 70), (cx + 110, cy + 150), (cx + 140, cy + 210)],
+        [(cx - 20, cy + 40), (cx - 70, cy + 100), (cx - 60, cy + 180)],
+        [(cx + 25, cy + 50), (cx + 80, cy + 110), (cx + 70, cy + 190)],
+    ]
+    for pts in root_paths:
+        d.line(pts, fill=_hex("#5d4037") + (255,), width=max(6, size // 40), joint="curve")
+        # root tips
+        x, y = pts[-1]
+        d.ellipse([x - 6, y - 6, x + 6, y + 6], fill=_hex("#6d4c41") + (255,))
     return img
 
 
-def icon_lion(size=256):
-    img, d = blank(size)
+def icon_shovel(size=512):
+    """Clean detailed shovel in a soft Noto-like style (no shovel emoji exists)."""
+    img = blank(size)
+    d = ImageDraw.Draw(img)
     s = size
-    _ellipse(d, [s * 0.1, s * 0.15, s * 0.9, s * 0.9], ORANGE, BROWN)
-    _ellipse(d, [s * 0.28, s * 0.32, s * 0.72, s * 0.78], SUN, INK)
-    _ellipse(d, [s * 0.38, s * 0.48, s * 0.45, s * 0.55], BLACK)
-    _ellipse(d, [s * 0.55, s * 0.48, s * 0.62, s * 0.55], BLACK)
+    # wooden handle
+    d.rounded_rectangle([s * 0.44, s * 0.08, s * 0.56, s * 0.55], radius=12, fill=_hex(WOOD) + (255,), outline=_hex("#6d4c41") + (255,), width=3)
+    # D-grip
+    d.rounded_rectangle([s * 0.34, s * 0.06, s * 0.66, s * 0.16], radius=10, fill=_hex(WOOD) + (255,), outline=_hex("#6d4c41") + (255,), width=3)
+    d.rounded_rectangle([s * 0.40, s * 0.09, s * 0.60, s * 0.14], radius=6, fill=(0, 0, 0, 0))
+    # metal shaft collar
+    d.rounded_rectangle([s * 0.42, s * 0.50, s * 0.58, s * 0.58], radius=4, fill=_hex(METAL) + (255,), outline=_hex("#607d8b") + (255,), width=2)
+    # blade
+    blade = [
+        (s * 0.28, s * 0.58),
+        (s * 0.72, s * 0.58),
+        (s * 0.68, s * 0.88),
+        (s * 0.50, s * 0.95),
+        (s * 0.32, s * 0.88),
+    ]
+    d.polygon(blade, fill=_hex("#78909c") + (255,), outline=_hex("#455a64") + (255,))
+    # blade highlight
+    d.line([(s * 0.38, s * 0.62), (s * 0.38, s * 0.82)], fill=_hex("#cfd8dc") + (255,), width=4)
     return img
 
 
-def icon_tiger(size=256):
-    img, d = blank(size)
+def icon_watering_can(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
     s = size
-    _ellipse(d, [s * 0.2, s * 0.25, s * 0.8, s * 0.85], ORANGE, INK)
-    for i in range(4):
-        y = s * (0.35 + i * 0.12)
-        _line(d, [(s * 0.3, y), (s * 0.7, y)], BLACK, 4)
-    _ellipse(d, [s * 0.38, s * 0.48, s * 0.45, s * 0.55], BLACK)
-    _ellipse(d, [s * 0.55, s * 0.48, s * 0.62, s * 0.55], BLACK)
+    # body
+    d.rounded_rectangle([s * 0.22, s * 0.38, s * 0.68, s * 0.78], radius=28, fill=_hex(BLUE) + (255,), outline=_hex("#1565c0") + (255,), width=4)
+    # top opening
+    d.ellipse([s * 0.28, s * 0.30, s * 0.62, s * 0.48], fill=_hex("#64b5f6") + (255,), outline=_hex("#1565c0") + (255,), width=3)
+    # handle
+    d.arc([s * 0.08, s * 0.40, s * 0.35, s * 0.72], 90, 270, fill=_hex("#1565c0") + (255,), width=14)
+    # spout
+    d.polygon([(s * 0.65, s * 0.48), (s * 0.92, s * 0.32), (s * 0.95, s * 0.40), (s * 0.68, s * 0.58)], fill=_hex(BLUE) + (255,), outline=_hex("#1565c0") + (255,))
+    # droplets from spout
+    paste_at(img, load_emoji("1f4a7"), 0.88, 0.55, 0.22)
+    paste_at(img, load_emoji("1f4a7"), 0.82, 0.68, 0.16)
     return img
 
 
-def icon_cheetah(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.4, s * 0.85, s * 0.75], SUN, INK)
-    _ellipse(d, [s * 0.6, s * 0.25, s * 0.9, s * 0.55], SUN, INK)
+def icon_wreath(size=512):
+    img = blank(size)
+    leaf = load_emoji("1f33f", 512)
+    berry = load_emoji("1f534", 512)
+    bow = load_emoji("1f380", 512)
+    for i in range(12):
+        a = i * math.pi / 6
+        paste_at(img, leaf, 0.5 + math.cos(a) * 0.32, 0.52 + math.sin(a) * 0.32, 0.28)
     for i in range(8):
-        x = s * (0.25 + (i % 4) * 0.12)
-        y = s * (0.48 + (i // 4) * 0.12)
-        _ellipse(d, [x, y, x + s * 0.05, y + s * 0.05], BLACK)
-    return img
-
-
-def icon_gorilla(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.2, s * 0.2, s * 0.8, s * 0.85], "#5d4037", INK)
-    _ellipse(d, [s * 0.3, s * 0.4, s * 0.7, s * 0.75], TAN, INK)
-    _ellipse(d, [s * 0.38, s * 0.48, s * 0.46, s * 0.56], BLACK)
-    _ellipse(d, [s * 0.54, s * 0.48, s * 0.62, s * 0.56], BLACK)
-    return img
-
-
-def icon_penguin(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.28, s * 0.15, s * 0.72, s * 0.85], BLACK, INK)
-    _ellipse(d, [s * 0.35, s * 0.35, s * 0.65, s * 0.8], WHITE)
-    _ellipse(d, [s * 0.4, s * 0.28, s * 0.48, s * 0.36], WHITE)
-    _ellipse(d, [s * 0.52, s * 0.28, s * 0.6, s * 0.36], WHITE)
-    _polygon(d, [(s * 0.5, s * 0.38), (s * 0.42, s * 0.45), (s * 0.58, s * 0.45)], ORANGE)
-    return img
-
-
-def icon_hippo(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.35, s * 0.85, s * 0.8], GRAY, INK)
-    _ellipse(d, [s * 0.25, s * 0.45, s * 0.75, s * 0.7], "#b0bec5")
-    _ellipse(d, [s * 0.38, s * 0.5, s * 0.45, s * 0.57], BLACK)
-    _ellipse(d, [s * 0.55, s * 0.5, s * 0.62, s * 0.57], BLACK)
-    return img
-
-
-def icon_rhino(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.4, s * 0.8, s * 0.8], GRAY, INK)
-    _ellipse(d, [s * 0.55, s * 0.3, s * 0.9, s * 0.65], GRAY, INK)
-    _polygon(d, [(s * 0.88, s * 0.4), (s * 0.98, s * 0.35), (s * 0.88, s * 0.5)], TAN, INK)
-    return img
-
-
-def icon_panda(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.2, s * 0.25, s * 0.8, s * 0.85], WHITE, INK)
-    _ellipse(d, [s * 0.22, s * 0.18, s * 0.4, s * 0.38], BLACK)
-    _ellipse(d, [s * 0.6, s * 0.18, s * 0.78, s * 0.38], BLACK)
-    _ellipse(d, [s * 0.35, s * 0.45, s * 0.48, s * 0.58], BLACK)
-    _ellipse(d, [s * 0.52, s * 0.45, s * 0.65, s * 0.58], BLACK)
-    return img
-
-
-def icon_koala(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.08, s * 0.25, s * 0.35, s * 0.55], GRAY, INK)
-    _ellipse(d, [s * 0.65, s * 0.25, s * 0.92, s * 0.55], GRAY, INK)
-    _ellipse(d, [s * 0.22, s * 0.3, s * 0.78, s * 0.85], GRAY, INK)
-    _ellipse(d, [s * 0.38, s * 0.5, s * 0.48, s * 0.6], BLACK)
-    _ellipse(d, [s * 0.52, s * 0.5, s * 0.62, s * 0.6], BLACK)
-    _ellipse(d, [s * 0.42, s * 0.62, s * 0.58, s * 0.72], "#efebe9")
-    return img
-
-
-def icon_kangaroo(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.3, s * 0.35, s * 0.7, s * 0.75], BROWN, INK)
-    _ellipse(d, [s * 0.45, s * 0.15, s * 0.75, s * 0.45], BROWN, INK)
-    _polygon(d, [(s * 0.35, s * 0.7), (s * 0.15, s * 0.9), (s * 0.45, s * 0.85)], BROWN, INK)
-    return img
-
-
-def icon_flamingo(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.35, s * 0.2, s * 0.7, s * 0.5], PINK, INK)
-    _line(d, [(s * 0.5, s * 0.5), (s * 0.45, s * 0.85)], PINK, 6)
-    _polygon(d, [(s * 0.7, s * 0.32), (s * 0.9, s * 0.28), (s * 0.7, s * 0.4)], ORANGE)
-    return img
-
-
-def icon_bear(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.12, s * 0.38, s * 0.35], BROWN, INK)
-    _ellipse(d, [s * 0.62, s * 0.12, s * 0.85, s * 0.35], BROWN, INK)
-    _ellipse(d, [s * 0.2, s * 0.25, s * 0.8, s * 0.85], BROWN, INK)
-    _ellipse(d, [s * 0.38, s * 0.48, s * 0.46, s * 0.56], BLACK)
-    _ellipse(d, [s * 0.54, s * 0.48, s * 0.62, s * 0.56], BLACK)
-    return img
-
-
-# --- Garden ---
-
-def icon_seed(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.35, s * 0.4, s * 0.65, s * 0.7], BROWN, INK)
-    return img
-
-
-def icon_soil(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.1, s * 0.45, s * 0.9, s * 0.85], BROWN, INK)
-    for i in range(6):
-        _ellipse(d, [s * (0.2 + i * 0.1), s * 0.55, s * (0.28 + i * 0.1), s * 0.65], "#5d4037")
-    return img
-
-
-def icon_shovel(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.45, s * 0.1, s * 0.55, s * 0.55], BROWN, INK)
-    _polygon(d, [(s * 0.35, s * 0.55), (s * 0.65, s * 0.55), (s * 0.58, s * 0.9), (s * 0.42, s * 0.9)], GRAY, INK)
-    return img
-
-
-def icon_watering_can(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.25, s * 0.4, s * 0.7, s * 0.75], SKY, INK)
-    _line(d, [(s * 0.7, s * 0.5), (s * 0.9, s * 0.35)], SKY, 8)
-    _ellipse(d, [s * 0.2, s * 0.35, s * 0.4, s * 0.55], SKY, INK)
-    return img
-
-
-def icon_dig(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.1, s * 0.55, s * 0.9, s * 0.85], BROWN, INK)
-    _polygon(d, [(s * 0.4, s * 0.55), (s * 0.6, s * 0.55), (s * 0.7, s * 0.35), (s * 0.3, s * 0.35)], "#a1887f")
-    return img
-
-
-def icon_plant(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.35, s * 0.55, s * 0.65, s * 0.9], BROWN, INK)
-    _ellipse(d, [s * 0.3, s * 0.25, s * 0.5, s * 0.5], LEAF, INK)
-    _ellipse(d, [s * 0.5, s * 0.2, s * 0.7, s * 0.45], LEAF, INK)
-    _line(d, [(s * 0.5, s * 0.55), (s * 0.5, s * 0.3)], DARK_GREEN, 4)
-    return img
-
-
-def icon_water(size=256):
-    img, d = blank(size)
-    s = size
-    for i, x in enumerate([0.3, 0.5, 0.7]):
-        _ellipse(d, [s * (x - 0.08), s * (0.25 + i * 0.05), s * (x + 0.08), s * (0.45 + i * 0.05)], SKY)
-    _ellipse(d, [s * 0.25, s * 0.55, s * 0.75, s * 0.85], LIGHT_BLUE, SKY)
-    return img
-
-
-def icon_sunlight(size=256):
-    img, d = blank(size)
-    s = size
-    cx, cy, r = s / 2, s / 2, s * 0.22
-    _ellipse(d, [cx - r, cy - r, cx + r, cy + r], SUN, ORANGE)
-    for i in range(8):
-        a = i * math.pi / 4
-        _line(
-            d,
-            [
-                (cx + math.cos(a) * r * 1.3, cy + math.sin(a) * r * 1.3),
-                (cx + math.cos(a) * r * 1.9, cy + math.sin(a) * r * 1.9),
-            ],
-            SUN,
-            6,
-        )
-    return img
-
-
-def icon_roots(size=256):
-    img, d = blank(size)
-    s = size
-    _line(d, [(s * 0.5, s * 0.15), (s * 0.5, s * 0.45)], BROWN, 5)
-    _line(d, [(s * 0.5, s * 0.45), (s * 0.3, s * 0.8)], BROWN, 4)
-    _line(d, [(s * 0.5, s * 0.45), (s * 0.7, s * 0.8)], BROWN, 4)
-    _line(d, [(s * 0.5, s * 0.5), (s * 0.5, s * 0.85)], BROWN, 4)
-    return img
-
-
-def icon_sprout(size=256):
-    img, d = blank(size)
-    s = size
-    _line(d, [(s * 0.5, s * 0.85), (s * 0.5, s * 0.4)], LEAF, 5)
-    _ellipse(d, [s * 0.28, s * 0.25, s * 0.5, s * 0.45], LEAF, INK)
-    _ellipse(d, [s * 0.5, s * 0.2, s * 0.72, s * 0.4], LEAF, INK)
-    return img
-
-
-def icon_flower(size=256):
-    img, d = blank(size)
-    s = size
-    cx, cy = s / 2, s * 0.4
-    for i in range(6):
-        a = i * math.pi / 3
-        _ellipse(
-            d,
-            [cx + math.cos(a) * s * 0.18 - s * 0.1, cy + math.sin(a) * s * 0.18 - s * 0.1,
-             cx + math.cos(a) * s * 0.18 + s * 0.1, cy + math.sin(a) * s * 0.18 + s * 0.1],
-            PINK,
-            BERRY,
-        )
-    _ellipse(d, [cx - s * 0.08, cy - s * 0.08, cx + s * 0.08, cy + s * 0.08], SUN)
-    _line(d, [(cx, cy + s * 0.1), (cx, s * 0.9)], LEAF, 5)
-    return img
-
-
-def icon_bee(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.25, s * 0.35, s * 0.75, s * 0.7], SUN, INK)
-    _rect(d, [s * 0.4, s * 0.35, s * 0.48, s * 0.7], BLACK)
-    _rect(d, [s * 0.55, s * 0.35, s * 0.63, s * 0.7], BLACK)
-    _ellipse(d, [s * 0.35, s * 0.2, s * 0.55, s * 0.4], WHITE, INK)
-    _ellipse(d, [s * 0.5, s * 0.18, s * 0.7, s * 0.38], WHITE, INK)
-    return img
-
-
-def icon_worm(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.2, s * 0.45, s * 0.8, s * 0.65], PINK, INK)
-    _ellipse(d, [s * 0.65, s * 0.48, s * 0.72, s * 0.55], BLACK)
-    return img
-
-
-def icon_ladybug(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.2, s * 0.3, s * 0.8, s * 0.8], RED, INK)
-    _ellipse(d, [s * 0.35, s * 0.18, s * 0.65, s * 0.4], BLACK)
-    for x, y in [(0.35, 0.45), (0.55, 0.45), (0.4, 0.6), (0.6, 0.6)]:
-        _ellipse(d, [s * x, s * y, s * (x + 0.1), s * (y + 0.1)], BLACK)
-    _line(d, [(s * 0.5, s * 0.3), (s * 0.5, s * 0.8)], BLACK, 3)
-    return img
-
-
-def icon_butterfly(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.1, s * 0.25, s * 0.5, s * 0.65], GRAPE, INK)
-    _ellipse(d, [s * 0.5, s * 0.25, s * 0.9, s * 0.65], SKY, INK)
-    _ellipse(d, [s * 0.42, s * 0.35, s * 0.58, s * 0.75], BLACK)
-    return img
-
-
-def icon_tomato(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.22, s * 0.3, s * 0.78, s * 0.85], RED, INK)
-    _polygon(d, [(s * 0.5, s * 0.2), (s * 0.4, s * 0.35), (s * 0.6, s * 0.35)], LEAF)
-    return img
-
-
-def icon_carrot(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(d, [(s * 0.5, s * 0.85), (s * 0.3, s * 0.3), (s * 0.7, s * 0.3)], ORANGE, INK)
-    _ellipse(d, [s * 0.35, s * 0.12, s * 0.5, s * 0.32], LEAF)
-    _ellipse(d, [s * 0.5, s * 0.1, s * 0.65, s * 0.3], LEAF)
-    return img
-
-
-def icon_sunflower(size=256):
-    img, d = blank(size)
-    s = size
-    cx, cy = s / 2, s * 0.4
-    for i in range(10):
-        a = i * math.pi / 5
-        _ellipse(
-            d,
-            [cx + math.cos(a) * s * 0.22 - s * 0.08, cy + math.sin(a) * s * 0.22 - s * 0.08,
-             cx + math.cos(a) * s * 0.22 + s * 0.08, cy + math.sin(a) * s * 0.22 + s * 0.08],
-            SUN,
-            ORANGE,
-        )
-    _ellipse(d, [cx - s * 0.12, cy - s * 0.12, cx + s * 0.12, cy + s * 0.12], BROWN)
-    _line(d, [(cx, cy + s * 0.15), (cx, s * 0.9)], LEAF, 6)
-    return img
-
-
-# --- Shapes ---
-
-def icon_circle(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.15, s * 0.85, s * 0.85], SKY, INK, 4)
-    return img
-
-
-def icon_square(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.18, s * 0.18, s * 0.82, s * 0.82], BERRY, INK, 4)
-    return img
-
-
-def icon_triangle(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(d, [(s * 0.5, s * 0.15), (s * 0.15, s * 0.85), (s * 0.85, s * 0.85)], LEAF, INK, 4)
-    return img
-
-
-def icon_rectangle(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.12, s * 0.3, s * 0.88, s * 0.7], GRAPE, INK, 4)
-    return img
-
-
-def icon_star(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(d, _star_points(s / 2, s / 2, s * 0.4, s * 0.18), SUN, ORANGE, 3)
-    return img
-
-
-def icon_heart(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(d, _heart_points(s / 2, s * 0.45, s * 0.4), BERRY, INK, 3)
-    return img
-
-
-def icon_plate(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.1, s * 0.15, s * 0.9, s * 0.85], WHITE, GRAY, 4)
-    _ellipse(d, [s * 0.25, s * 0.3, s * 0.75, s * 0.7], CREAM, GRAY, 2)
-    return img
-
-
-def icon_clock(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.12, s * 0.12, s * 0.88, s * 0.88], WHITE, INK, 4)
-    _line(d, [(s / 2, s / 2), (s / 2, s * 0.28)], INK, 5)
-    _line(d, [(s / 2, s / 2), (s * 0.7, s / 2)], INK, 5)
-    return img
-
-
-def icon_cracker(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.2, s * 0.2, s * 0.8, s * 0.8], SUN, BROWN, 3)
-    for i in range(3):
-        for j in range(3):
-            x, y = s * (0.32 + i * 0.15), s * (0.32 + j * 0.15)
-            _ellipse(d, [x, y, x + s * 0.06, y + s * 0.06], BROWN)
-    return img
-
-
-def icon_block(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.2, s * 0.35, s * 0.7, s * 0.85], RED, INK, 3)
-    _polygon(d, [(s * 0.2, s * 0.35), (s * 0.35, s * 0.2), (s * 0.85, s * 0.2), (s * 0.7, s * 0.35)], "#ef5350", INK)
-    _polygon(d, [(s * 0.7, s * 0.35), (s * 0.85, s * 0.2), (s * 0.85, s * 0.7), (s * 0.7, s * 0.85)], "#c62828", INK)
-    return img
-
-
-def icon_sandwich(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.15, s * 0.3, s * 0.85, s * 0.42], SUN, BROWN)
-    _rect(d, [s * 0.18, s * 0.42, s * 0.82, s * 0.52], LEAF)
-    _rect(d, [s * 0.18, s * 0.52, s * 0.82, s * 0.62], RED)
-    _rect(d, [s * 0.15, s * 0.62, s * 0.85, s * 0.74], SUN, BROWN)
-    return img
-
-
-def icon_flag(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.25, s * 0.15, s * 0.32, s * 0.9], BROWN, INK)
-    _polygon(d, [(s * 0.32, s * 0.15), (s * 0.85, s * 0.35), (s * 0.32, s * 0.55)], BERRY, INK)
-    return img
-
-
-def icon_door(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.25, s * 0.1, s * 0.75, s * 0.9], BROWN, INK, 3)
-    _ellipse(d, [s * 0.58, s * 0.48, s * 0.68, s * 0.58], SUN)
-    return img
-
-
-def icon_book(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.2, s * 0.2, s * 0.8, s * 0.85], SKY, INK, 3)
-    _rect(d, [s * 0.2, s * 0.2, s * 0.32, s * 0.85], "#1565c0")
-    _line(d, [(s * 0.4, s * 0.4), (s * 0.7, s * 0.4)], WHITE, 3)
-    _line(d, [(s * 0.4, s * 0.55), (s * 0.7, s * 0.55)], WHITE, 3)
-    return img
-
-
-def icon_rug(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.1, s * 0.25, s * 0.9, s * 0.75], BERRY, INK, 3)
-    _rect(d, [s * 0.2, s * 0.35, s * 0.8, s * 0.65], SUN)
-    return img
-
-
-def icon_cookie(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.15, s * 0.85, s * 0.85], BROWN, INK)
-    for x, y in [(0.35, 0.35), (0.55, 0.4), (0.4, 0.55), (0.6, 0.6), (0.45, 0.7)]:
-        _ellipse(d, [s * x, s * y, s * (x + 0.08), s * (y + 0.08)], "#3e2723")
-    return img
-
-
-# --- Numbers ---
-
-def _ball_at(d, cx, cy, item, color=RED):
-    r = item / 2
-    _ellipse(d, [cx - r, cy - r, cx + r, cy + r], color, INK)
-
-
-def icon_ball(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.2, s * 0.2, s * 0.8, s * 0.8], RED, INK)
-    _line(d, [(s * 0.2, s * 0.5), (s * 0.8, s * 0.5)], WHITE, 3)
-    _line(d, [(s * 0.5, s * 0.2), (s * 0.5, s * 0.8)], WHITE, 3)
-    return img
-
-
-def icon_number_word(word: str, size=256):
-    counts = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
-    n = counts[word]
-
-    def draw_one(d, cx, cy, item):
-        _ball_at(d, cx, cy, item, RED)
-
-    return _count_items(draw_one, n, size)
-
-
-def icon_cats(size=256):
-    def draw_one(d, cx, cy, item):
-        r = item / 2
-        _ellipse(d, [cx - r, cy - r * 0.7, cx + r, cy + r * 0.7], ORANGE, INK)
-        _ellipse(d, [cx - r * 0.5, cy - r, cx - r * 0.1, cy - r * 0.5], ORANGE)
-        _ellipse(d, [cx + r * 0.1, cy - r, cx + r * 0.5, cy - r * 0.5], ORANGE)
-
-    return _count_items(draw_one, 3, size)
-
-
-def icon_cookies(size=256):
-    def draw_one(d, cx, cy, item):
-        r = item / 2
-        _ellipse(d, [cx - r, cy - r, cx + r, cy + r], BROWN, INK)
-
-    return _count_items(draw_one, 4, size)
-
-
-def icon_cups(size=256):
-    def draw_one(d, cx, cy, item):
-        w, h = item * 0.6, item * 0.8
-        _polygon(d, [(cx - w / 2, cy - h / 2), (cx + w / 2, cy - h / 2),
-                     (cx + w / 3, cy + h / 2), (cx - w / 3, cy + h / 2)], SKY, INK)
-
-    return _count_items(draw_one, 3, size)
-
-
-def icon_tomatoes(size=256):
-    def draw_one(d, cx, cy, item):
-        r = item / 2
-        _ellipse(d, [cx - r, cy - r, cx + r, cy + r], RED, INK)
-
-    return _count_items(draw_one, 5, size)
-
-
-def icon_ducks(size=256):
-    def draw_one(d, cx, cy, item):
-        r = item / 2
-        _ellipse(d, [cx - r, cy - r * 0.4, cx + r * 0.5, cy + r * 0.5], SUN, INK)
-        _ellipse(d, [cx + r * 0.2, cy - r * 0.8, cx + r, cy - r * 0.1], SUN, INK)
-        _polygon(d, [(cx + r, cy - r * 0.5), (cx + r * 1.4, cy - r * 0.4), (cx + r, cy - r * 0.3)], ORANGE)
-
-    return _count_items(draw_one, 2, size)
-
-
-def icon_steps(size=256):
-    img, d = blank(size)
-    s = size
-    for i in range(4):
-        _rect(d, [s * (0.15 + i * 0.05), s * (0.7 - i * 0.15), s * 0.85, s * (0.85 - i * 0.15)], GRAY, INK)
-    return img
-
-
-def icon_walk(size=256):
-    img, d = blank(size)
-    s = size
-    # simple footprints
-    for i, (x, y) in enumerate([(0.3, 0.6), (0.45, 0.45), (0.6, 0.6), (0.75, 0.45)]):
-        _ellipse(d, [s * x, s * y, s * (x + 0.12), s * (y + 0.2)], BROWN, INK)
-    return img
-
-
-def icon_count(size=256):
-    img, d = blank(size)
-    s = size
-    for i, n in enumerate("123"):
-        # draw dots
-        _ellipse(d, [s * (0.2 + i * 0.25), s * 0.35, s * (0.35 + i * 0.25), s * 0.55], SKY, INK)
-    return img
-
-
-# --- Colors ---
-
-def icon_color_swatch(color: str, size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.15, s * 0.85, s * 0.85], color, INK, 4)
-    return img
-
-
-def icon_yarn(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.2, s * 0.2, s * 0.8, s * 0.8], BERRY, INK)
-    for i in range(4):
-        _ellipse(d, [s * 0.25, s * (0.3 + i * 0.1), s * 0.75, s * (0.4 + i * 0.1)], None if False else BERRY)
-        d.arc([s * 0.25, s * (0.25 + i * 0.1), s * 0.75, s * (0.55 + i * 0.1)], 0, 180, fill=_hex(INK) + (255,), width=3)
-    return img
-
-
-def icon_banana(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(
-        d,
-        [(s * 0.2, s * 0.35), (s * 0.35, s * 0.2), (s * 0.8, s * 0.55), (s * 0.7, s * 0.75), (s * 0.3, s * 0.55)],
-        YELLOW,
-        INK,
-    )
-    return img
-
-
-def icon_orange_fruit(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.2, s * 0.85, s * 0.9], ORANGE, INK, 3)
-    _ellipse(d, [s * 0.45, s * 0.12, s * 0.6, s * 0.25], LEAF)
-    # highlight so it's clearly fruit not color swatch
-    _ellipse(d, [s * 0.3, s * 0.35, s * 0.45, s * 0.5], "#ffb74d")
-    return img
-
-
-def icon_boots(size=256):
-    img, d = blank(size)
-    s = size
-    for x in (0.2, 0.55):
-        _rect(d, [s * x, s * 0.25, s * (x + 0.25), s * 0.7], RED, INK)
-        _rect(d, [s * x, s * 0.65, s * (x + 0.35), s * 0.85], RED, INK)
-    return img
-
-
-def icon_grass(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.05, s * 0.55, s * 0.95, s * 0.9], LEAF, DARK_GREEN)
-    for i in range(8):
-        x = s * (0.1 + i * 0.1)
-        _polygon(d, [(x, s * 0.55), (x + s * 0.04, s * 0.25), (x + s * 0.08, s * 0.55)], LEAF)
-    return img
-
-
-def icon_blanket(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.1, s * 0.2, s * 0.9, s * 0.8], GRAPE, INK, 3)
-    for i in range(3):
-        for j in range(3):
-            if (i + j) % 2 == 0:
-                _rect(
-                    d,
-                    [s * (0.15 + i * 0.25), s * (0.28 + j * 0.18), s * (0.35 + i * 0.25), s * (0.42 + j * 0.18)],
-                    SKY,
-                )
-    return img
-
-
-def icon_picnic(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.1, s * 0.4, s * 0.9, s * 0.85], RED, INK)
-    for i in range(4):
-        for j in range(3):
-            if (i + j) % 2:
-                _rect(
-                    d,
-                    [s * (0.1 + i * 0.2), s * (0.4 + j * 0.15), s * (0.3 + i * 0.2), s * (0.55 + j * 0.15)],
-                    WHITE,
-                )
-    _ellipse(d, [s * 0.35, s * 0.2, s * 0.65, s * 0.45], BROWN)  # basket hint
-    return img
-
-
-# --- Snow / winter ---
-
-def icon_snow(size=256):
-    img, d = blank(size)
-    s = size
-    for x, y, r in [(0.3, 0.3, 0.08), (0.6, 0.25, 0.1), (0.45, 0.5, 0.09), (0.25, 0.65, 0.07), (0.7, 0.6, 0.1)]:
-        _ellipse(d, [s * (x - r), s * (y - r), s * (x + r), s * (y + r)], LIGHT_BLUE, SKY)
-    return img
-
-
-def icon_snowflake(size=256):
-    img, d = blank(size)
-    s = size
-    cx, cy = s / 2, s / 2
-    for i in range(6):
-        a = i * math.pi / 3
-        x2, y2 = cx + math.cos(a) * s * 0.4, cy + math.sin(a) * s * 0.4
-        _line(d, [(cx, cy), (x2, y2)], SKY, 5)
-        _line(d, [(cx + math.cos(a) * s * 0.25, cy + math.sin(a) * s * 0.25),
-                  (cx + math.cos(a + 0.4) * s * 0.35, cy + math.sin(a + 0.4) * s * 0.35)], SKY, 3)
-    return img
-
-
-def icon_snowman(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.28, s * 0.55, s * 0.72, s * 0.95], WHITE, INK)
-    _ellipse(d, [s * 0.32, s * 0.3, s * 0.68, s * 0.65], WHITE, INK)
-    _ellipse(d, [s * 0.38, s * 0.1, s * 0.62, s * 0.38], WHITE, INK)
-    _ellipse(d, [s * 0.44, s * 0.2, s * 0.48, s * 0.24], BLACK)
-    _ellipse(d, [s * 0.52, s * 0.2, s * 0.56, s * 0.24], BLACK)
-    _polygon(d, [(s * 0.5, s * 0.26), (s * 0.65, s * 0.28), (s * 0.5, s * 0.3)], ORANGE)
-    # winter hat
-    _rect(d, [s * 0.36, s * 0.02, s * 0.64, s * 0.14], RED, INK)
-    _rect(d, [s * 0.3, s * 0.12, s * 0.7, s * 0.18], RED, INK)
-    return img
-
-
-def icon_snowball(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.2, s * 0.2, s * 0.8, s * 0.8], WHITE, SKY, 3)
-    return img
-
-
-def icon_cold(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.35, s * 0.15, s * 0.65, s * 0.7], LIGHT_BLUE, SKY)
-    _ellipse(d, [s * 0.3, s * 0.6, s * 0.7, s * 0.9], SKY, INK)
-    # frost marks
-    _line(d, [(s * 0.4, s * 0.3), (s * 0.45, s * 0.4)], WHITE, 3)
-    return img
-
-
-def icon_warm(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.25, s * 0.25, s * 0.75, s * 0.75], SUN, ORANGE)
-    for i in range(8):
-        a = i * math.pi / 4
-        _line(d, [(s / 2 + math.cos(a) * s * 0.3, s / 2 + math.sin(a) * s * 0.3),
-                  (s / 2 + math.cos(a) * s * 0.42, s / 2 + math.sin(a) * s * 0.42)], ORANGE, 5)
-    return img
-
-
-def icon_hat(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.25, s * 0.35, s * 0.75, s * 0.7], BERRY, INK)
-    _rect(d, [s * 0.15, s * 0.6, s * 0.85, s * 0.75], BERRY, INK)
-    _ellipse(d, [s * 0.42, s * 0.2, s * 0.58, s * 0.4], WHITE)
-    return img
-
-
-def icon_scarf(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.2, s * 0.25, s * 0.8, s * 0.45], LEAF, INK)
-    _rect(d, [s * 0.55, s * 0.4, s * 0.75, s * 0.85], LEAF, INK)
-    for y in range(3):
-        _line(d, [(s * 0.55, s * (0.7 + y * 0.05)), (s * 0.75, s * (0.7 + y * 0.05))], DARK_GREEN, 2)
-    return img
-
-
-def icon_gloves(size=256):
-    img, d = blank(size)
-    s = size
-    for x in (0.15, 0.55):
-        _ellipse(d, [s * x, s * 0.35, s * (x + 0.3), s * 0.8], SKY, INK)
-        _ellipse(d, [s * (x + 0.18), s * 0.22, s * (x + 0.32), s * 0.42], SKY, INK)
-    return img
-
-
-def icon_coat(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(
-        d,
-        [(s * 0.25, s * 0.2), (s * 0.75, s * 0.2), (s * 0.85, s * 0.85), (s * 0.15, s * 0.85)],
-        "#1565c0",
-        INK,
-    )
-    _line(d, [(s * 0.5, s * 0.2), (s * 0.5, s * 0.85)], INK, 3)
-    _ellipse(d, [s * 0.42, s * 0.45, s * 0.48, s * 0.51], SUN)
-    return img
-
-
-def icon_winter(size=256):
-    img, d = blank(size)
-    s = size
-    _ellipse(d, [s * 0.15, s * 0.55, s * 0.85, s * 0.9], WHITE, SKY)
-    _polygon(d, [(s * 0.5, s * 0.15), (s * 0.2, s * 0.6), (s * 0.8, s * 0.6)], "#90caf9", SKY)
-    return img
-
-
-def icon_window(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.15, s * 0.15, s * 0.85, s * 0.85], LIGHT_BLUE, BROWN, 5)
-    _line(d, [(s * 0.5, s * 0.15), (s * 0.5, s * 0.85)], BROWN, 5)
-    _line(d, [(s * 0.15, s * 0.5), (s * 0.85, s * 0.5)], BROWN, 5)
-    return img
-
-
-def icon_ice(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(d, [(s * 0.5, s * 0.1), (s * 0.85, s * 0.5), (s * 0.5, s * 0.9), (s * 0.15, s * 0.5)], LIGHT_BLUE, SKY, 3)
-    return img
-
-
-# --- Christmas ---
-
-def icon_tree(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(d, [(s * 0.5, s * 0.1), (s * 0.2, s * 0.45), (s * 0.8, s * 0.45)], LEAF, INK)
-    _polygon(d, [(s * 0.5, s * 0.3), (s * 0.15, s * 0.65), (s * 0.85, s * 0.65)], LEAF, INK)
-    _polygon(d, [(s * 0.5, s * 0.5), (s * 0.1, s * 0.85), (s * 0.9, s * 0.85)], LEAF, INK)
-    _rect(d, [s * 0.42, s * 0.85, s * 0.58, s * 0.95], BROWN)
-    return img
-
-
-def icon_wreath(size=256):
-    img2, d2 = blank(size)
-    s = size
-    _ellipse(d2, [s * 0.15, s * 0.2, s * 0.85, s * 0.9], LEAF, DARK_GREEN, 4)
-    mask = Image.new("L", (size, size), 0)
-    md = ImageDraw.Draw(mask)
-    md.ellipse([s * 0.32, s * 0.37, s * 0.68, s * 0.73], fill=255)
-    clear = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    img2.paste(clear, mask=mask)
-    d2 = ImageDraw.Draw(img2)
-    _polygon(d2, [(s * 0.45, s * 0.15), (s * 0.55, s * 0.15), (s * 0.5, s * 0.28)], BERRY)
-    for a in range(0, 360, 45):
+        a = i * math.pi / 4 + 0.2
+        paste_at(img, berry, 0.5 + math.cos(a) * 0.30, 0.52 + math.sin(a) * 0.30, 0.12)
+    paste_at(img, bow, 0.5, 0.18, 0.35)
+    return img
+
+
+def icon_stocking(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
+    s = size
+    # cuff
+    d.rounded_rectangle([s * 0.32, s * 0.12, s * 0.68, s * 0.28], radius=8, fill=_hex(WHITE) + (255,), outline=_hex(INK) + (255,), width=3)
+    # leg
+    d.rounded_rectangle([s * 0.36, s * 0.24, s * 0.64, s * 0.62], radius=12, fill=_hex(RED) + (255,), outline=_hex("#b71c1c") + (255,), width=3)
+    # foot
+    d.ellipse([s * 0.34, s * 0.52, s * 0.88, s * 0.88], fill=_hex(RED) + (255,), outline=_hex("#b71c1c") + (255,), width=3)
+    d.rounded_rectangle([s * 0.36, s * 0.52, s * 0.64, s * 0.7], radius=4, fill=_hex(RED) + (255,))
+    # white toe highlight + tiny gift emoji
+    paste_at(img, load_emoji("1f381"), 0.55, 0.42, 0.22)
+    return img
+
+
+def icon_ornament(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
+    s = size
+    # cap
+    d.rounded_rectangle([s * 0.40, s * 0.12, s * 0.60, s * 0.28], radius=6, fill=_hex(YELLOW) + (255,), outline=_hex(ORANGE) + (255,), width=3)
+    d.arc([s * 0.44, s * 0.04, s * 0.56, s * 0.18], 180, 0, fill=_hex(METAL) + (255,), width=6)
+    # bauble
+    d.ellipse([s * 0.18, s * 0.24, s * 0.82, s * 0.90], fill=_hex(RED) + (255,), outline=_hex("#b71c1c") + (255,), width=4)
+    # shine
+    d.ellipse([s * 0.30, s * 0.35, s * 0.48, s * 0.55], fill=_hex("#ef9a9a") + (200,))
+    # stripe
+    d.arc([s * 0.22, s * 0.40, s * 0.78, s * 0.70], 200, 340, fill=_hex(YELLOW) + (255,), width=10)
+    paste_at(img, load_emoji("1f380"), 0.5, 0.08, 0.2)
+    return img
+
+
+def icon_candy_cane(size=512):
+    """Smooth red-and-white candy cane (no dedicated Noto emoji) in a soft emoji style."""
+    s = size
+    # Draw at 2x then downscale for smoother edges
+    hi = s * 2
+    cane = Image.new("RGBA", (hi, hi), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(cane)
+    thickness = int(hi * 0.13)
+    pts = []
+    for a in range(200, 375, 2):
         rad = math.radians(a)
-        cx = s / 2 + math.cos(rad) * s * 0.28
-        cy = s * 0.55 + math.sin(rad) * s * 0.28
-        _ellipse(d2, [cx - 6, cy - 6, cx + 6, cy + 6], RED)
-    return img2
+        cx = hi * 0.50 + math.cos(rad) * hi * 0.22
+        cy = hi * 0.34 + math.sin(rad) * hi * 0.20
+        pts.append((cx, cy))
+    last = pts[-1]
+    for t in range(0, 110):
+        pts.append((last[0], last[1] + t * hi * 0.005))
+    # soft gray rim
+    for x, y in pts:
+        r = thickness // 2 + 6
+        cd.ellipse([x - r, y - r, x + r, y + r], fill=(224, 224, 224, 255))
+    body = Image.new("RGBA", (hi, hi), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(body)
+    for x, y in pts:
+        r = thickness // 2
+        bd.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, 255))
+    # glossy highlight along left
+    gloss = Image.new("RGBA", (hi, hi), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(gloss)
+    for i, (x, y) in enumerate(pts[::3]):
+        if i % 2:
+            continue
+        r = max(4, thickness // 5)
+        gd.ellipse([x - thickness // 3 - r, y - r, x - thickness // 3 + r, y + r], fill=(255, 255, 255, 160))
+    stripe = Image.new("RGBA", (hi, hi), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(stripe)
+    for i in range(0, len(pts) - 1, 14):
+        x1, y1 = pts[i]
+        x2, y2 = pts[min(i + 4, len(pts) - 1)]
+        dx, dy = x2 - x1, y2 - y1
+        px, py = -dy, dx
+        plen = math.hypot(px, py) or 1
+        px, py = px / plen * thickness * 0.55, py / plen * thickness * 0.55
+        sd.line([(x1 - px, y1 - py), (x1 + px, y1 + py)], fill=_hex(RED) + (255,), width=max(14, thickness // 2))
+    cane_mask = body.split()[-1]
+    stripe.putalpha(ImageChops.multiply(stripe.split()[-1], cane_mask))
+    gloss.putalpha(ImageChops.multiply(gloss.split()[-1], cane_mask))
+    out = Image.new("RGBA", (hi, hi), (0, 0, 0, 0))
+    out.alpha_composite(cane)
+    out.alpha_composite(body)
+    out.alpha_composite(stripe)
+    out.alpha_composite(gloss)
+    return out.resize((s, s), Image.Resampling.LANCZOS)
 
 
-def icon_stocking(size=256):
-    img, d = blank(size)
+def icon_snowball(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
     s = size
-    _rect(d, [s * 0.35, s * 0.15, s * 0.65, s * 0.55], RED, INK)
-    _rect(d, [s * 0.35, s * 0.15, s * 0.65, s * 0.28], WHITE, INK)
-    _ellipse(d, [s * 0.35, s * 0.45, s * 0.85, s * 0.85], RED, INK)
+    d.ellipse([s * 0.12, s * 0.12, s * 0.88, s * 0.88], fill=_hex("#e3f2fd") + (255,), outline=_hex("#90caf9") + (255,), width=6)
+    d.ellipse([s * 0.25, s * 0.22, s * 0.45, s * 0.40], fill=_hex(WHITE) + (220,))
+    paste_at(img, load_emoji("2744"), 0.7, 0.7, 0.28)
+    paste_at(img, load_emoji("2744"), 0.3, 0.65, 0.18)
     return img
 
 
-def icon_lights(size=256):
-    img, d = blank(size)
-    s = size
-    colors = [RED, SUN, LEAF, SKY, GRAPE, BERRY]
-    _line(d, [(s * 0.1, s * 0.3), (s * 0.9, s * 0.5)], LEAF, 3)
-    for i, c in enumerate(colors):
-        x = s * (0.15 + i * 0.12)
-        y = s * (0.35 + (i % 2) * 0.15)
-        _ellipse(d, [x, y, x + s * 0.1, y + s * 0.14], c, INK)
+def icon_dig(size=512):
+    img = icon_soil(size)
+    paste_at(img, load_emoji("26cf"), 0.72, 0.35, 0.45)
     return img
 
 
-def icon_bell(size=256):
-    img, d = blank(size)
+def icon_blanket(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
     s = size
-    _ellipse(d, [s * 0.25, s * 0.25, s * 0.75, s * 0.75], SUN, ORANGE)
-    _rect(d, [s * 0.2, s * 0.65, s * 0.8, s * 0.78], SUN, ORANGE)
-    _ellipse(d, [s * 0.45, s * 0.75, s * 0.55, s * 0.88], ORANGE)
-    _ellipse(d, [s * 0.42, s * 0.12, s * 0.58, s * 0.28], GRAY)
+    # folded blanket with soft checks
+    d.rounded_rectangle([s * 0.1, s * 0.2, s * 0.9, s * 0.85], radius=28, fill=_hex(PURPLE) + (255,), outline=_hex("#6a1b9a") + (255,), width=4)
+    colors = [PURPLE, BLUE, "#ce93d8", "#90caf9"]
+    for r in range(4):
+        for c in range(4):
+            d.rectangle(
+                [s * (0.16 + c * 0.17), s * (0.28 + r * 0.12), s * (0.31 + c * 0.17), s * (0.38 + r * 0.12)],
+                fill=_hex(colors[(r + c) % 4]) + (255,),
+            )
+    # fold edge
+    d.polygon([(s * 0.1, s * 0.2), (s * 0.28, s * 0.12), (s * 0.9, s * 0.12), (s * 0.9, s * 0.2)], fill=_hex("#7e57c2") + (255,))
     return img
 
 
-def icon_ornament(size=256):
-    img, d = blank(size)
+def icon_lights(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
     s = size
-    _ellipse(d, [s * 0.25, s * 0.3, s * 0.75, s * 0.85], BERRY, INK)
-    _rect(d, [s * 0.42, s * 0.18, s * 0.58, s * 0.32], SUN, INK)
-    _ellipse(d, [s * 0.35, s * 0.45, s * 0.5, s * 0.6], "#f48fb1")
+    # wire
+    pts = [(s * 0.08, s * 0.35), (s * 0.25, s * 0.25), (s * 0.45, s * 0.4), (s * 0.65, s * 0.22), (s * 0.85, s * 0.38), (s * 0.95, s * 0.3)]
+    d.line(pts, fill=_hex(DARK_GREEN) + (255,), width=6, joint="curve")
+    bulbs = ["1f534", "1f7e8", "1f7e9", "1f535", "1f7ea", "1f7e7"]
+    for i, cp in enumerate(bulbs):
+        t = i / (len(bulbs) - 1)
+        # sample along polyline approx
+        x = 0.12 + t * 0.78
+        y = 0.28 + (0.08 if i % 2 == 0 else -0.05)
+        paste_at(img, load_emoji(cp), x, y + 0.12, 0.2)
+    paste_at(img, load_emoji("2728"), 0.5, 0.7, 0.35)
     return img
 
 
-def icon_candy_cane(size=256):
-    img, d = blank(size)
+def icon_rug(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
     s = size
-    # curved cane approximated with thick arcs/rects
-    _ellipse(d, [s * 0.3, s * 0.15, s * 0.7, s * 0.5], WHITE, RED, 12)
-    # clear lower left of ellipse
-    d.rectangle([s * 0.3, s * 0.35, s * 0.5, s * 0.5], fill=(0, 0, 0, 0))
-    _rect(d, [s * 0.55, s * 0.35, s * 0.68, s * 0.9], WHITE, RED, 3)
-    for i in range(5):
-        y = s * (0.4 + i * 0.1)
-        _line(d, [(s * 0.55, y), (s * 0.68, y + s * 0.04)], RED, 5)
+    d.rounded_rectangle([s * 0.08, s * 0.22, s * 0.92, s * 0.82], radius=20, fill=_hex(RED) + (255,), outline=_hex("#b71c1c") + (255,), width=5)
+    d.rounded_rectangle([s * 0.16, s * 0.30, s * 0.84, s * 0.74], radius=14, fill=_hex(CREAM) + (255,), outline=_hex(ORANGE) + (255,), width=4)
+    # center medallion via star emoji
+    paste_at(img, load_emoji("2b50"), 0.5, 0.52, 0.35)
     return img
 
 
-def icon_reindeer(size=256):
-    img, d = blank(size)
+def icon_scarf(size=512):
+    # Prefer Noto scarf emoji when present
+    path = ICONS_DIR / "emoji_u1f9e3.png"
+    if path.exists():
+        return emoji_icon("1f9e3", size)
+    img = blank(size)
+    d = ImageDraw.Draw(img)
     s = size
-    _ellipse(d, [s * 0.3, s * 0.4, s * 0.7, s * 0.8], BROWN, INK)
-    _ellipse(d, [s * 0.35, s * 0.25, s * 0.65, s * 0.5], BROWN, INK)
-    _ellipse(d, [s * 0.45, s * 0.38, s * 0.55, s * 0.48], RED)  # nose
-    _line(d, [(s * 0.4, s * 0.3), (s * 0.25, s * 0.1)], BROWN, 4)
-    _line(d, [(s * 0.6, s * 0.3), (s * 0.75, s * 0.1)], BROWN, 4)
+    d.rounded_rectangle([s * 0.15, s * 0.28, s * 0.85, s * 0.48], radius=20, fill=_hex(GREEN) + (255,))
+    d.rounded_rectangle([s * 0.55, s * 0.4, s * 0.78, s * 0.88], radius=16, fill=_hex(GREEN) + (255,))
     return img
 
 
-def icon_present(size=256):
-    img, d = blank(size)
+def icon_rectangle(size=512):
+    img = blank(size)
+    d = ImageDraw.Draw(img)
     s = size
-    _rect(d, [s * 0.2, s * 0.35, s * 0.8, s * 0.85], BERRY, INK, 3)
-    _rect(d, [s * 0.45, s * 0.35, s * 0.55, s * 0.85], SUN)
-    _rect(d, [s * 0.2, s * 0.55, s * 0.8, s * 0.65], SUN)
-    _polygon(d, [(s * 0.5, s * 0.2), (s * 0.35, s * 0.35), (s * 0.65, s * 0.35)], SUN)
+    d.rounded_rectangle([s * 0.08, s * 0.28, s * 0.92, s * 0.72], radius=28, fill=_hex(BLUE) + (255,), outline=_hex("#1565c0") + (255,), width=6)
     return img
 
 
-def icon_candle(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.4, s * 0.35, s * 0.6, s * 0.85], CREAM, INK)
-    _ellipse(d, [s * 0.42, s * 0.15, s * 0.58, s * 0.4], SUN, ORANGE)
-    _rect(d, [s * 0.3, s * 0.8, s * 0.7, s * 0.9], RED, INK)
-    return img
+def icon_orange_color(size=512):
+    return color_with_object(ORANGE, "1f34a", size)
 
 
-def icon_card(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.2, s * 0.2, s * 0.8, s * 0.8], WHITE, BERRY, 4)
-    _polygon(d, _heart_points(s / 2, s * 0.5, s * 0.2), BERRY)
-    return img
+def icon_orange_fruit(size=512):
+    return emoji_icon("1f34a", size)
 
 
-def icon_box(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.2, s * 0.4, s * 0.8, s * 0.85], TAN, INK, 3)
-    _polygon(d, [(s * 0.2, s * 0.4), (s * 0.35, s * 0.25), (s * 0.95, s * 0.25), (s * 0.8, s * 0.4)], "#bcaaa4", INK)
-    return img
+# Primary word -> renderer
+def _simple(cp: str):
+    return lambda size=512, _cp=cp: emoji_icon(_cp, size)
 
 
-def icon_ribbon(size=256):
-    img, d = blank(size)
-    s = size
-    _rect(d, [s * 0.15, s * 0.4, s * 0.85, s * 0.55], BERRY, INK)
-    _ellipse(d, [s * 0.35, s * 0.25, s * 0.5, s * 0.45], BERRY)
-    _ellipse(d, [s * 0.5, s * 0.25, s * 0.65, s * 0.45], BERRY)
-    return img
-
-
-def icon_bow(size=256):
-    img, d = blank(size)
-    s = size
-    _polygon(d, [(s * 0.5, s * 0.5), (s * 0.15, s * 0.25), (s * 0.15, s * 0.75)], BERRY, INK)
-    _polygon(d, [(s * 0.5, s * 0.5), (s * 0.85, s * 0.25), (s * 0.85, s * 0.75)], BERRY, INK)
-    _ellipse(d, [s * 0.4, s * 0.4, s * 0.6, s * 0.6], SUN)
-    return img
-
-
-ICON_MAP = {
-    "elephant": icon_elephant,
-    "giraffe": icon_giraffe,
-    "zebra": icon_zebra,
-    "lion": icon_lion,
-    "tiger": icon_tiger,
-    "cheetah": icon_cheetah,
-    "gorilla": icon_gorilla,
-    "penguin": icon_penguin,
-    "hippo": icon_hippo,
-    "rhino": icon_rhino,
-    "panda": icon_panda,
-    "koala": icon_koala,
-    "kangaroo": icon_kangaroo,
-    "flamingo": icon_flamingo,
-    "bear": icon_bear,
-    "seed": icon_seed,
+ICON_BUILDERS = {
+    # zoo
+    "elephant": _simple("1f418"),
+    "giraffe": _simple("1f992"),
+    "zebra": _simple("1f993"),
+    "lion": _simple("1f981"),
+    "tiger": _simple("1f42f"),
+    "cheetah": _simple("1f406"),
+    "gorilla": _simple("1f98d"),
+    "penguin": _simple("1f427"),
+    "hippo": _simple("1f99b"),
+    "rhino": _simple("1f98f"),
+    "panda": _simple("1f43c"),
+    "koala": _simple("1f428"),
+    "kangaroo": _simple("1f998"),
+    "flamingo": _simple("1f9a9"),
+    "bear": _simple("1f43b"),
+    # garden
+    "seed": _simple("1f331"),
     "soil": icon_soil,
     "shovel": icon_shovel,
     "watering can": icon_watering_can,
     "dig": icon_dig,
-    "plant": icon_plant,
-    "water": icon_water,
-    "sunlight": icon_sunlight,
+    "plant": _simple("1fab4"),
+    "water": _simple("1f4a7"),
+    "sunlight": _simple("2600"),
     "roots": icon_roots,
-    "sprout": icon_sprout,
-    "flower": icon_flower,
-    "bee": icon_bee,
-    "worm": icon_worm,
-    "ladybug": icon_ladybug,
-    "butterfly": icon_butterfly,
-    "tomato": icon_tomato,
-    "carrot": icon_carrot,
-    "sunflower": icon_sunflower,
-    "circle": icon_circle,
-    "square": icon_square,
-    "triangle": icon_triangle,
+    "sprout": _simple("1f331"),
+    "flower": _simple("1f338"),
+    "bee": _simple("1f41d"),
+    "worm": _simple("1fab1"),
+    "ladybug": _simple("1f41e"),
+    "butterfly": _simple("1f98b"),
+    "tomato": _simple("1f345"),
+    "carrot": _simple("1f955"),
+    "sunflower": _simple("1f33b"),
+    # shapes
+    "circle": _simple("1f535"),
+    "square": _simple("1f7e6"),
+    "triangle": _simple("1f53a"),
     "rectangle": icon_rectangle,
-    "star": icon_star,
-    "heart": icon_heart,
-    "plate": icon_plate,
-    "clock": icon_clock,
-    "cracker": icon_cracker,
-    "block": icon_block,
-    "sandwich": icon_sandwich,
-    "flag": icon_flag,
-    "door": icon_door,
-    "book": icon_book,
+    "star": _simple("2b50"),
+    "heart": _simple("2764"),
+    "plate": _simple("1f37d"),
+    "clock": _simple("1f552"),
+    "cracker": _simple("1f358"),
+    "block": _simple("1f9f1"),
+    "sandwich": _simple("1f96a"),
+    "flag": _simple("1f6a9"),
+    "door": _simple("1f6aa"),
+    "book": _simple("1f4d6"),
     "rug": icon_rug,
-    "cookie": icon_cookie,
-    "one": lambda s=256: icon_number_word("one", s),
-    "two": lambda s=256: icon_number_word("two", s),
-    "three": lambda s=256: icon_number_word("three", s),
-    "four": lambda s=256: icon_number_word("four", s),
-    "five": lambda s=256: icon_number_word("five", s),
-    "ball": icon_ball,
-    "cats": icon_cats,
-    "cookies": icon_cookies,
-    "cups": icon_cups,
-    "tomatoes": icon_tomatoes,
-    "ducks": icon_ducks,
-    "steps": icon_steps,
-    "walk": icon_walk,
-    "count": icon_count,
-    "red": lambda s=256: icon_color_swatch(RED, s),
-    "blue": lambda s=256: icon_color_swatch(BLUE, s),
-    "yellow": lambda s=256: icon_color_swatch(YELLOW, s),
-    "orange": lambda s=256: icon_color_swatch(ORANGE, s),
-    "green": lambda s=256: icon_color_swatch(GREEN, s),
-    "purple": lambda s=256: icon_color_swatch(PURPLE, s),
-    "yarn": icon_yarn,
-    "banana": icon_banana,
+    "cookie": _simple("1f36a"),
+    # numbers
+    "one": lambda s=512: count_emoji("1f34e", 1, s),
+    "two": lambda s=512: count_emoji("1f34e", 2, s),
+    "three": lambda s=512: count_emoji("1f34e", 3, s),
+    "four": lambda s=512: count_emoji("1f34e", 4, s),
+    "five": lambda s=512: count_emoji("1f34e", 5, s),
+    "ball": _simple("26bd"),
+    "cats": lambda s=512: count_emoji("1f431", 3, s),
+    "cookies": lambda s=512: count_emoji("1f36a", 4, s),
+    "cups": lambda s=512: count_emoji("1f375", 3, s),
+    "tomatoes": lambda s=512: count_emoji("1f345", 5, s),
+    "ducks": lambda s=512: count_emoji("1f986", 2, s),
+    "steps": _simple("1fa9c"),
+    "walk": _simple("1f6b6"),
+    "count": _simple("1f522"),
+    # colors
+    "red": lambda s=512: color_with_object(RED, "1f34e", s),
+    "blue": lambda s=512: color_with_object(BLUE, "1f535", s),
+    "yellow": lambda s=512: color_with_object(YELLOW, "1f34b", s),
+    "orange": icon_orange_color,
+    "green": lambda s=512: color_with_object(GREEN, "1f34f", s),
+    "purple": lambda s=512: color_with_object(PURPLE, "1f347", s),
+    "yarn": _simple("1f9f6"),
+    "banana": _simple("1f34c"),
     "orange fruit": icon_orange_fruit,
-    "boots": icon_boots,
-    "grass": icon_grass,
+    "boots": _simple("1f462"),
+    "grass": _simple("1f33f"),
     "blanket": icon_blanket,
-    "picnic": icon_picnic,
-    "snow": icon_snow,
-    "snowflake": icon_snowflake,
-    "snowman": icon_snowman,
+    "picnic": _simple("1f9fa"),
+    # snow
+    "snow": _simple("1f328"),
+    "snowflake": _simple("2744"),
+    "snowman": _simple("26c4"),
     "snowball": icon_snowball,
-    "cold": icon_cold,
-    "warm": icon_warm,
-    "hat": icon_hat,
+    "cold": _simple("1f976"),
+    "warm": _simple("1f31e"),
+    "hat": _simple("1f9e2"),
     "scarf": icon_scarf,
-    "gloves": icon_gloves,
-    "coat": icon_coat,
-    "winter": icon_winter,
-    "window": icon_window,
-    "ice": icon_ice,
-    "tree": icon_tree,
+    "gloves": _simple("1f9e4"),
+    "coat": _simple("1f9e5"),
+    "winter": _simple("2744"),
+    "window": _simple("1fa9f"),
+    "ice": _simple("1f9ca"),
+    # christmas
+    "tree": _simple("1f384"),
     "wreath": icon_wreath,
     "stocking": icon_stocking,
     "lights": icon_lights,
-    "bell": icon_bell,
+    "bell": _simple("1f514"),
     "ornament": icon_ornament,
     "candy cane": icon_candy_cane,
-    "reindeer": icon_reindeer,
-    "present": icon_present,
-    "candle": icon_candle,
-    "card": icon_card,
-    "box": icon_box,
-    "ribbon": icon_ribbon,
-    "bow": icon_bow,
+    "reindeer": _simple("1f98c"),
+    "present": _simple("1f381"),
+    "candle": _simple("1f56f"),
+    "card": _simple("1f48c"),
+    "box": _simple("1f4e6"),
+    "ribbon": _simple("1f380"),
+    "bow": _simple("1f380"),
 }
+
+# Back-compat for checks that look for ICON_MAP
+ICON_MAP = ICON_BUILDERS
 
 
 def get_icon(word: str, size: int = 256) -> Image.Image:
     key = word.strip().lower()
-    fn = ICON_MAP.get(key)
+    fn = ICON_BUILDERS.get(key)
     if fn is None:
-        # fallback: labeled circle
-        img, d = blank(size)
-        _ellipse(d, [size * 0.15, size * 0.15, size * 0.85, size * 0.85], SKY, INK)
-        return img
-    return fn(size)
+        img = blank(max(size, 256))
+        return img.resize((size, size), Image.Resampling.LANCZOS) if size != img.size[0] else img
+    im = fn(512)
+    if size != 512:
+        im = im.resize((size, size), Image.Resampling.LANCZOS)
+    return im

@@ -167,7 +167,7 @@ def draw_character_proportional(
     max_h: float,
     placements: list | None = None,
 ):
-    """Draw character preserving aspect ratio (no stretching)."""
+    """Draw full character preserving aspect ratio (no stretching, no crop)."""
     from PIL import Image
 
     path = character_path(name)
@@ -182,6 +182,27 @@ def draw_character_proportional(
     c.drawImage(str(path), dx, dy, width=w, height=h, mask="auto")
     if placements is not None:
         placements.append({"name": name, "src_w": iw, "src_h": ih, "dst_w": w, "dst_h": h})
+
+
+def draw_corner_character(
+    c: canvas.Canvas,
+    name: str,
+    width: float,
+    height: float,
+    margin: float,
+    footer_top: float,
+    placements: list | None = None,
+    corner: str = "left",
+    max_h: float = 95,
+):
+    """One full transparent character in a page corner, above the footer."""
+    max_w = 70
+    y = footer_top + 2
+    if corner == "left":
+        x = margin
+    else:
+        x = width - margin - max_w
+    draw_character_proportional(c, name, x, y, max_w, max_h, placements)
 
 
 def rounded_card(c, x, y, w, h, stroke=CARD_BORDER, fill=None, radius=8):

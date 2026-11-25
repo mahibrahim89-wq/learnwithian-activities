@@ -160,8 +160,17 @@ def check_counts_colors_shapes(words: list[str]) -> tuple[bool, str]:
             if wl not in ICON_MAP:
                 return False, f"count word {w} missing icon"
         if wl == "orange" and "orange fruit" in [x.lower() for x in words]:
+            # Must be different builders (color swatch+object vs fruit emoji)
             if ICON_MAP.get("orange") is ICON_MAP.get("orange fruit"):
                 return False, "orange and orange fruit share the same icon"
+            # Also compare rendered pixels briefly
+            from .icons import get_icon
+            import numpy as np
+
+            a = np.array(get_icon("orange", 128))
+            b = np.array(get_icon("orange fruit", 128))
+            if a.shape == b.shape and np.mean(np.abs(a.astype(int) - b.astype(int))) < 2:
+                return False, "orange and orange fruit look identical"
         if wl in ("circle", "square", "triangle", "rectangle", "star", "heart"):
             if wl not in ICON_MAP:
                 return False, f"shape {w} missing"

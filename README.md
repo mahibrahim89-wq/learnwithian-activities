@@ -4,6 +4,9 @@ Builds free toddler/preschool printables (flashcards, bingo, memory) plus a
 Pinterest image for each Learn with Ian episode. Every page links back to the
 episode with a QR code.
 
+Word pictures use [Google Noto Emoji](https://github.com/googlefonts/noto-emoji)
+(Apache 2.0); see `NOTICE` and the `icons/` folder.
+
 ## Setup
 
 ```bash
@@ -13,6 +16,7 @@ pip install -r requirements.txt
 ```
 
 Character art lives in `characters/` (already committed). Fonts are in `fonts/`.
+Noto emoji PNGs are in `icons/`.
 
 ## Run
 
