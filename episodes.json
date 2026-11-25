@@ -1,0 +1,73 @@
+[
+  {
+    "episode": 1,
+    "youtube_id": "baG8fJsSXFg",
+    "slug": "zoo-day",
+    "title": "Ian's Zoo Day",
+    "words": [
+      "elephant", "giraffe", "zebra", "lion", "tiger", "cheetah", "gorilla",
+      "penguin", "hippo", "rhino", "panda", "koala", "kangaroo", "flamingo", "bear"
+    ]
+  },
+  {
+    "episode": 2,
+    "youtube_id": "oUq2iLSBxUU",
+    "slug": "little-garden",
+    "title": "Ian's Little Garden",
+    "words": [
+      "seed", "soil", "shovel", "watering can", "dig", "plant", "water", "sunlight",
+      "roots", "sprout", "flower", "bee", "worm", "ladybug", "butterfly", "tomato",
+      "carrot", "sunflower"
+    ]
+  },
+  {
+    "episode": 3,
+    "youtube_id": "E2k4atUZDsg",
+    "slug": "shape-hunt",
+    "title": "Ian's Shape Hunt",
+    "words": [
+      "circle", "square", "triangle", "rectangle", "star", "heart", "plate", "clock",
+      "cracker", "block", "sandwich", "flag", "door", "book", "rug", "cookie"
+    ]
+  },
+  {
+    "episode": 4,
+    "youtube_id": "_5Jwth51cnc",
+    "slug": "number-walk",
+    "title": "Ian's Number Walk",
+    "words": [
+      "one", "two", "three", "four", "five", "ball", "cats", "cookies", "cups",
+      "tomatoes", "ducks", "steps", "walk", "count"
+    ]
+  },
+  {
+    "episode": 5,
+    "youtube_id": "5Cwxl4TWipE",
+    "slug": "ian-s-color-day",
+    "title": "Ian's Color Day",
+    "words": [
+      "red", "blue", "yellow", "orange", "green", "purple", "yarn", "ball",
+      "banana", "orange fruit", "boots", "grass", "blanket", "picnic"
+    ]
+  },
+  {
+    "episode": 6,
+    "youtube_id": "g-E2RaXlU0s",
+    "slug": "ian-s-snowy-day",
+    "title": "Ian's Snowy Day",
+    "words": [
+      "snow", "snowflake", "snowman", "snowball", "cold", "warm", "hat", "scarf",
+      "gloves", "boots", "coat", "blanket", "winter", "window", "ice"
+    ]
+  },
+  {
+    "episode": 7,
+    "youtube_id": "TAyFj_YT8KM",
+    "slug": "ian-s-christmas-eve",
+    "title": "Ian's Christmas Eve",
+    "words": [
+      "tree", "wreath", "stocking", "lights", "bell", "ornament", "candy cane",
+      "reindeer", "star", "present", "candle", "cookie", "card", "box", "ribbon", "bow"
+    ]
+  }
+]

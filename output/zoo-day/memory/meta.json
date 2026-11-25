@@ -1,0 +1,31 @@
+{
+  "episode": 1,
+  "episode_title": "Ian's Zoo Day",
+  "youtube_id": "baG8fJsSXFg",
+  "activity": "memory",
+  "title": "Free Zoo Day Memory Game for Toddlers and Preschool",
+  "description": "A free printable memory activity for ages 2 to 6. Goes with the Learn with Ian episode Ian's Zoo Day. Watch it together on YouTube, then play! Includes US Letter and A4 PDFs. learnwithian.com",
+  "keywords": [
+    "zoo day memory for toddlers",
+    "free printable",
+    "preschool activity",
+    "learn with ian"
+  ],
+  "words": [
+    "elephant",
+    "giraffe",
+    "zebra",
+    "lion",
+    "tiger",
+    "cheetah",
+    "gorilla",
+    "penguin",
+    "hippo",
+    "rhino",
+    "panda",
+    "koala"
+  ],
+  "pages_letter": 2,
+  "pages_a4": 2,
+  "checks_passed": true
+}
